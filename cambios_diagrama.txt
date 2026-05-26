@@ -1,0 +1,105 @@
+CAMBIOS REALIZADOS AL DIAGRAMA ORIGINAL
+========================================
+
+1. CONDICION INCORRECTA EN objetivo.sat.cl
+------------------------------------------
+- Original:  /SensorDY[value > 8]  ->  Subir / Bajar
+- Corregido: /SensorDY[value > 0]  ->  Bajar
+             /SensorDY[value < 0]  ->  Subir
+
+  El umbral "8" no existia en el codigo. La logica real compara
+  con 0: si la distancia Y es positiva el proyectil baja, si es
+  negativa sube.
+
+
+2. TYPO EN filtro.sat.cl
+------------------------
+- Original:  /SensordI[value > 50]
+- Corregido: /SensorDecibeles[value > 50]
+
+  El nombre del sensor estaba mal escrito (d minuscula, letra I
+  al final). El nombre correcto de la entidad es SensorDecibeles.
+
+
+3. FALTABA EL COMPONENTE SONAR
+-------------------------------
+- Original:  no aparecia en el diagrama
+- Corregido: agregado como productor de mensajes
+
+  El sonar es el punto de entrada del sistema. Barre el grid en
+  radios 0 a 25, detecta enemigos y publica eventos al exchange.
+  Sin el, el diagrama no representa el inicio del flujo.
+
+
+4. FALTABA LA CAPA DE MENSAJERIA RABBITMQ
+-----------------------------------------
+- Original:  no existia ninguna representacion de mensajeria
+- Corregido: agregados dos componentes del broker
+
+  a) Exchange "sonar" (tipo fanout):
+     - Recibe eventos de rmq_main.py
+     - Los distribuye a todos los nodos suscritos
+     - Cada mensaje incluye campo "target_node" para que solo
+       el nodo correcto actue
+
+  b) Cola "main_responses":
+     - Los nodos envian confirmaciones al main (playing/stopped)
+     - El main escucha esta cola en un hilo separado
+
+
+5. FALTABAN LOS NODOS DE AUDIO
+-------------------------------
+- Original:  no existian como componentes
+- Corregido: agregados node1 a node6 como consumidores
+
+  Cada nodo es un proceso independiente (rmq_node.py) que:
+  - Escucha el exchange sonar
+  - Actua solo si "target_node" coincide con su ID
+  - Reproduce el sonido asignado en loop hasta recibir stop
+  - Confirma su estado por la cola main_responses
+
+  Roles:
+    node1  ->  sonar.mp3  (sonido del barrido sonar)
+    node2  ->  test0.mp3  (sonido de ataque)
+    node3  ->  test1.mp3  (sonido de ataque)
+    node4  ->  test2.mp3  (sonido de ataque)
+    node5  ->  test3.mp3  (sonido de ataque)
+    node6  ->  test4.mp3  (sonido de ataque)
+
+
+6. FALTABA EL FLUJO DE RESPUESTA
+---------------------------------
+- Original:  comunicacion solo en un sentido (main -> nodos)
+- Corregido: flujo bidireccional
+
+  Los nodos responden al main confirmando que iniciaron o
+  detuvieron la reproduccion. Esto cierra el ciclo de
+  mensajeria y permite al main saber el estado de cada nodo.
+
+
+7. LOGICA DE ACTIVACION DE NODOS (cambio de comportamiento)
+------------------------------------------------------------
+- Original:  todos los nodos recibían el mismo mensaje fanout
+             y todos reproducian a la vez
+- Corregido: solo UN nodo suena a la vez
+
+  Flujo corregido:
+    1. Sonar barre el grid -> node1 suena (sonar.mp3)
+    2. Al terminar el sonar -> node1 se detiene
+    3. Se ataca el enemigo mas cercano -> nodeX empieza a sonar
+    4. El proyectil viaja hacia el enemigo
+    5. Al impactar -> nodeX se detiene
+    6. Se ataca el siguiente enemigo mas cercano -> nodeY empieza
+    7. Repetir hasta eliminar todos los enemigos
+
+
+PATRONES EIP IDENTIFICADOS EN EL DIAGRAMA FINAL
+================================================
+
+- Message Channel        : sDistanciaX, sDistanciaY, sDecibeles,
+                           cola main_responses
+- Publish-Subscribe      : exchange fanout "sonar"
+- Content-Based Router   : objetivo.sat.cl (decision X/Y),
+                           filtro.sat.cl (atacar/ignorar)
+- Event-Driven Consumer  : nodos reaccionan solo a su target_node
+- Request-Reply          : nodos confirman estado al main
